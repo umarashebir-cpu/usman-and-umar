@@ -7,10 +7,11 @@ USMAN AND UMAR is an Android automation assistant built on the OpenDroid codebas
 - **Cloud reasoning:** OpenRouter is selected for new installations. Other configured providers are available from Settings. Provider credentials are stored through the app's protected credential store; requests require a configured provider and, where applicable, an API key.
 - **Tool execution:** The cloud model can request registered tools through the OpenAI-compatible tool-calling protocol. The app validates and dispatches each tool locally; Android actions remain subject to their existing grants and approval rules.
 - **GitHub discovery:** Public repository search and inspection use GitHub's REST API. The app can save a repository as supported project context, make it active, inspect metadata/README/root entries, and start a real `git clone` through the Termux `RUN_COMMAND` API.
-- **Termux commands:** Commands execute in the installed Termux environment, not in a simulated shell. Termux must allow external app commands, and the app must have Termux's `RUN_COMMAND` permission. Command output and exit status are returned through the callback contract.
+- **Integrated Linux terminal:** The terminal screen owns an app-private Alpine ARMv7 userspace and starts it through the reviewed Termux-maintained PRoot source with `--link2symlink`. The rootfs is downloaded and SHA-256 verified on first use; the app does not require root or a separate Termux installation. The PRoot ARM32 executable must be built and installed for the target device before the runtime can report ready.
+- **Optional Termux bridge:** The legacy external Termux integration remains available for explicitly authorized compatibility tasks, but it is not the integrated terminal backend and is not required for normal app operation.
 - **No bundled local inference:** The app no longer packages a GGUF model, llama.cpp module, or LiteRT local inference engine. Termux remains an optional user-authorized execution backend; it is not an AI reasoning engine.
 
-GitHub and Termux capabilities require connectivity or an installed/configured Termux app as appropriate. GitHub public endpoints can be rate-limited. Tool availability and successful model tool-calling vary by provider/model.
+GitHub and Linux-runtime installation require connectivity. GitHub public endpoints can be rate-limited. Tool availability and successful model tool-calling vary by provider/model. Android can stop background processes, so terminal sessions are recoverable but are not advertised as unlimited background execution.
 
 ## Android and build requirements
 
@@ -33,7 +34,7 @@ The opt-in unsigned release is for validation only and is not installable as a d
 
 ## Device setup
 
-After installation, configure an LLM provider and its API key in Settings. To use command execution or repository cloning, install Termux, allow external app commands in Termux, and grant the app the Termux `RUN_COMMAND` permission. Android permission prompts and high-impact plan approvals remain in force.
+After installation, configure an LLM provider and its API key in Settings. Open the integrated terminal to install the verified Alpine userspace, then use its real shell and `apk` package manager. The optional compatibility bridge separately requires Termux, its external-command setting, and the Android `RUN_COMMAND` permission. Android permission prompts and high-impact plan approvals remain in force.
 
 ## Verification status
 

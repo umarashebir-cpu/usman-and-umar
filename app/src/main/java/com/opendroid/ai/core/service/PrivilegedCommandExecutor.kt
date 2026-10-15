@@ -10,6 +10,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 enum class CommandBackend {
+    INTEGRATED_LINUX,
     SHIZUKU,
     ROOT,
     APP_SHELL,
@@ -31,6 +32,12 @@ class PrivilegedCommandExecutor @Inject constructor() {
         require(command.length <= MAX_COMMAND_LENGTH) { "Command is too long" }
 
         when (val backend = selectBackend()) {
+            CommandBackend.INTEGRATED_LINUX -> CommandExecutionResult(
+                backend = backend,
+                exitCode = -1,
+                stdout = "",
+                stderr = "Use the integrated Linux terminal session for Alpine commands"
+            )
             CommandBackend.SHIZUKU -> runShizuku(command, backend)
             CommandBackend.ROOT -> runProcess(arrayOf("su", "-c", command), backend)
             CommandBackend.APP_SHELL -> runProcess(arrayOf("sh", "-c", command), backend)
@@ -50,6 +57,7 @@ class PrivilegedCommandExecutor @Inject constructor() {
     )
 
     fun startShell(): Pair<CommandBackend, Process> = when (val backend = selectBackend()) {
+        CommandBackend.INTEGRATED_LINUX -> error("Integrated Linux sessions are managed by PersistentTerminalManager")
         CommandBackend.SHIZUKU -> backend to shizukuProcess(arrayOf("sh"))
         CommandBackend.ROOT -> backend to ProcessBuilder("su").redirectErrorStream(true).start()
         CommandBackend.APP_SHELL -> backend to ProcessBuilder("sh").redirectErrorStream(true).start()

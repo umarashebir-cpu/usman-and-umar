@@ -309,7 +309,7 @@ fun OpenDroidNavigation(
         }
 
         composable(OpenDroidRoutes.TERMUX) {
-            TermuxScreen(
+            IntegratedTerminalScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStack() }
             )

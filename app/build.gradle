@@ -20,9 +20,23 @@ android {
         versionCode 23
         versionName "3.0.0-cloud-ai"
 
+        // Release/device builds target the Samsung Galaxy M10's 32-bit ARM ABI.
+        // CI instrumentation explicitly overrides this to x86_64 because the
+        // GitHub-hosted emulator cannot execute ARM-only APKs.
+        ndk {
+            abiFilters instrumentedTestAbi ?: 'armeabi-v7a'
+        }
+
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
         }
     }
 

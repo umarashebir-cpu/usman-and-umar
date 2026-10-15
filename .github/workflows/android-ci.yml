@@ -42,7 +42,7 @@ jobs:
       - name: Set up Android SDK and NDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018'
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018 cmake;3.22.1'
 
       # Only main writes the cache, so pull requests share one warm cache
       # instead of each seeding its own.
@@ -51,8 +51,67 @@ jobs:
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
+      - name: Install ARM32 cross-compilation toolchain
+        run: |
+          sudo dpkg --add-architecture armhf
+          sudo tee /etc/apt/sources.list.d/armhf-ports.list >/dev/null <<'EOF'
+          deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports noble main universe
+          deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports noble-updates main universe
+          deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports noble-security main universe
+          EOF
+          sudo apt-get update || true
+          sudo apt-get install -y gcc-arm-linux-gnueabihf libseccomp-dev:armhf libtalloc-dev:armhf pkg-config
+
+      - name: Cross-compile and package pinned PRoot for ARM32
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/proot
+          git clone https://github.com/termux/proot.git /tmp/proot
+          git -C /tmp/proot checkout --quiet b8c1f5c5c6730dc9d521d5bd5ce1cfeedecde087
+          make -C /tmp/proot/src -j"$(nproc)" \
+            CROSS_COMPILE=arm-linux-gnueabihf- \
+            CC=arm-linux-gnueabihf-gcc \
+            STRIP=arm-linux-gnueabihf-strip \
+            CFLAGS='-marm -DARM_cpsr=uregs[16] -DPSR_T_BIT=0x00000020' \
+            LDFLAGS="-static -ltalloc -Wl,-z,noexecstack"
+          file /tmp/proot/src/proot | tee /tmp/proot-file.txt
+          grep -E 'ELF 32-bit.*ARM.*EABI5.*statically linked' /tmp/proot-file.txt
+          mkdir -p app/src/main/assets/proot
+          cp /tmp/proot/src/proot app/src/main/assets/proot/proot
+          chmod 755 app/src/main/assets/proot/proot
+          ls -la app/src/main/assets/proot/
+
+      - name: Download pinned Alpine archive for extraction regression
+        run: |
+          set -euo pipefail
+          base=https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/armv7
+          curl --fail --silent --show-error --location "$base/alpine-minirootfs-3.24.2-armv7.tar.gz" -o /tmp/alpine-minirootfs-3.24.2-armv7.tar.gz
+          printf '%s  %s\n' '5552f1ef2398cee46ef2cf733f8f1258f39a77ad065dfd47282fc0df9fe1976c' /tmp/alpine-minirootfs-3.24.2-armv7.tar.gz | sha256sum -c -
+
       - name: Run unit tests and build debug APK
-        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace
+        run: ./gradlew -Dalpine.archive=/tmp/alpine-minirootfs-3.24.2-armv7.tar.gz testDebugUnitTest assembleDebug --stacktrace
+
+      - name: Inspect debug APK
+        run: |
+          apk=$(find app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' -print -quit)
+          test -n "$apk"
+          sha256sum "$apk" | tee app/build/outputs/apk/debug/SHA256SUMS.txt
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump packagename "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$apk" | grep -E "package:|native-code"
+          unzip -l "$apk" | grep -E 'lib/|META-INF/' || true
+
+      - name: Verify PRoot in debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$APK" | grep -F 'assets/proot/proot'
+          unzip -p "$APK" assets/proot/proot > /tmp/proot-from-apk
+          file /tmp/proot-from-apk | tee /tmp/proot-apk-file.txt
+          grep -E 'ELF 32-bit.*ARM.*EABI5.*statically linked' /tmp/proot-apk-file.txt
+          chmod 755 /tmp/proot-from-apk
+          sha256sum /tmp/proot-from-apk | tee app/build/outputs/apk/debug/PROOT_SHA256SUM.txt
 
       - name: Upload test reports
         if: always()
@@ -61,6 +120,18 @@ jobs:
           name: test-reports
           path: app/build/reports/tests/
           if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload debug APK evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-armv7
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/debug/SHA256SUMS.txt
+            app/build/outputs/apk/debug/PROOT_SHA256SUM.txt
+          if-no-files-found: error
           retention-days: 14
 
   lint:
@@ -80,7 +151,7 @@ jobs:
       - name: Set up Android SDK and NDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018'
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018 cmake;3.22.1'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -107,6 +178,7 @@ jobs:
   instrumented-tests:
     name: Instrumented tests (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -126,7 +198,7 @@ jobs:
       - name: Set up Android SDK and NDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018'
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018 cmake;3.22.1'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -150,17 +222,36 @@ jobs:
         with:
           api-level: ${{ matrix.api-level }}
           arch: x86_64
-          target: ${{ matrix.api-level >= 30 && 'google_apis' || 'default' }}
+          target: google_apis
           force-avd-creation: true
           cores: 4
           ram-size: 4096M
           emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
-          emulator-boot-timeout: 1200
+          emulator-boot-timeout: 600
           disable-spellchecker: true
           disable-animations: true
           # The release APK remains armeabi-v7a-only; CI uses an x86_64 test
           # APK because GitHub-hosted emulators cannot execute ARM-only APKs.
-          script: ./gradlew :app:connectedDebugAndroidTest -PinstrumentedTestAbi=x86_64 --stacktrace
+          script: |
+            set -eu
+            echo "=== ADB devices ==="
+            adb devices -l
+            echo "=== Waiting for an online ADB device (5 minute cap) ==="
+            timeout --signal=TERM --kill-after=30s 5m bash -c 'until adb get-state 2>/dev/null | grep -qx device; do sleep 2; done'
+            echo "=== Emulator status ==="
+            adb shell getprop sys.boot_completed
+            echo "=== Waiting for sys.boot_completed (5 minute cap) ==="
+            timeout --signal=TERM --kill-after=30s 5m bash -c 'until test "$(adb shell getprop sys.boot_completed | tr -d "\r")" = 1; do sleep 2; done'
+            echo "=== ADB devices after boot ==="
+            adb devices -l
+            echo "=== Free disk ==="
+            df -h
+            echo "=== Memory ==="
+            free -h
+            echo "=== Running bounded PTY smoke tests (10 minute cap) ==="
+            timeout --signal=TERM --kill-after=60s 10m ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.opendroid.ai.core.pty.PtySessionInstrumentedTest -PinstrumentedTestAbi=x86_64 --stacktrace --no-daemon
+            echo "=== Running Android tests (25 minute cap) ==="
+            timeout --signal=TERM --kill-after=60s 25m ./gradlew :app:connectedDebugAndroidTest -PinstrumentedTestAbi=x86_64 --stacktrace --no-daemon
 
       - name: Upload instrumented test reports
         if: always()
@@ -188,12 +279,42 @@ jobs:
       - name: Set up Android SDK and NDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018'
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018 cmake;3.22.1'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Install ARM32 cross-compilation toolchain
+        run: |
+          sudo dpkg --add-architecture armhf
+          sudo tee /etc/apt/sources.list.d/armhf-ports.list >/dev/null <<'EOF'
+          deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports noble main universe
+          deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports noble-updates main universe
+          deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports noble-security main universe
+          EOF
+          sudo apt-get update || true
+          sudo apt-get install -y gcc-arm-linux-gnueabihf libseccomp-dev:armhf libtalloc-dev:armhf pkg-config
+
+      - name: Cross-compile and package pinned PRoot for ARM32
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/proot
+          git clone https://github.com/termux/proot.git /tmp/proot
+          git -C /tmp/proot checkout --quiet b8c1f5c5c6730dc9d521d5bd5ce1cfeedecde087
+          make -C /tmp/proot/src -j"$(nproc)" \
+            CROSS_COMPILE=arm-linux-gnueabihf- \
+            CC=arm-linux-gnueabihf-gcc \
+            STRIP=arm-linux-gnueabihf-strip \
+            CFLAGS='-marm -DARM_cpsr=uregs[16] -DPSR_T_BIT=0x00000020' \
+            LDFLAGS="-static -ltalloc -Wl,-z,noexecstack"
+          file /tmp/proot/src/proot | tee /tmp/proot-file.txt
+          grep -E 'ELF 32-bit.*ARM.*EABI5.*statically linked' /tmp/proot-file.txt
+          mkdir -p app/src/main/assets/proot
+          cp /tmp/proot/src/proot app/src/main/assets/proot/proot
+          chmod 755 app/src/main/assets/proot/proot
 
       # No signing secrets in CI. -PallowUnsignedRelease builds an unsigned,
       # uninstallable APK purely to exercise R8/ProGuard, which debug builds
@@ -210,3 +331,42 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14
+
+  runtime-provenance:
+    name: PRoot and Alpine provenance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify pinned PRoot source and link2symlink option
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/termux/proot.git /tmp/proot
+          test "$(git -C /tmp/proot rev-parse HEAD)" = "b8c1f5c5c6730dc9d521d5bd5ce1cfeedecde087"
+          grep -R --line-number -- '--link2symlink' /tmp/proot/src/cli/proot.c /tmp/proot/src/cli/proot.h
+          grep -R --line-number 'extension/link2symlink/link2symlink.o' /tmp/proot/src/GNUmakefile
+      - name: Verify official Alpine ARMv7 archive checksum
+        shell: bash
+        run: |
+          base=https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/armv7
+          mkdir -p /tmp/alpine-check
+          curl --fail --silent --show-error --location "$base/alpine-minirootfs-3.24.2-armv7.tar.gz.sha256" -o /tmp/alpine-check/alpine.sha256
+          grep -F '5552f1ef2398cee46ef2cf733f8f1258f39a77ad065dfd47282fc0df9fe1976c  alpine-minirootfs-3.24.2-armv7.tar.gz' /tmp/alpine-check/alpine.sha256
+          curl --fail --silent --show-error --location "$base/alpine-minirootfs-3.24.2-armv7.tar.gz" -o /tmp/alpine-check/alpine-minirootfs-3.24.2-armv7.tar.gz
+          (cd /tmp/alpine-check && sha256sum -c alpine.sha256)
+          tar -tzf /tmp/alpine-check/alpine-minirootfs-3.24.2-armv7.tar.gz >/tmp/alpine.members
+          ! grep -E '(^/|(^|/)\.\./|(^|/)\.\.$)' /tmp/alpine.members
+          python3 - <<'PY'
+          import posixpath
+          import tarfile
+          archive = '/tmp/alpine-check/alpine-minirootfs-3.24.2-armv7.tar.gz'
+          with tarfile.open(archive, 'r:gz') as tf:
+              links = {member.name: member.linkname for member in tf if member.issym()}
+          assert links['./var/spool/cron/crontabs'] == '../../../etc/crontabs'
+          resolved = posixpath.normpath(posixpath.join(
+              posixpath.dirname('./var/spool/cron/crontabs'),
+              links['./var/spool/cron/crontabs']))
+          assert resolved == 'etc/crontabs', resolved
+          assert links['./etc/ssl1.1/certs'] == '/etc/ssl/certs'
+          assert links['./etc/ssl1.1/cert.pem'] == '/etc/ssl/cert.pem'
+          print('TRUSTED_GUEST_ABSOLUTE_LINKS=/etc/ssl/certs,/etc/ssl/cert.pem')
+          print('VALID_ALPINE_SYMLINK=./var/spool/cron/crontabs -> ../../../etc/crontabs => root/etc/crontabs')
+          PY

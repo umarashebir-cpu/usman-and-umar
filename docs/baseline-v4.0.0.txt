@@ -1,0 +1,83 @@
+USMAN AND UMAR — BASELINE v4.0.0
+
+Repository
+- URL: https://github.com/umarashebir-cpu/usman-and-umar
+- Branch: feature/integrated-linux-terminal
+- Base branch: main
+- HEAD at inspection: 704c573b5264514d64db47ff5695844a79404170 (v3.0.0)
+- Existing PR #3: MERGED before this task; no attempt was made to merge it again.
+- Working tree at baseline: clean before implementation.
+- Implementation branch: feature/integrated-linux-terminal
+
+Android configuration
+- Application ID: com.usmanandumar.app
+- Visible app name: USMAN AND UMAR
+- minSdk: 28
+- targetSdk: 34
+- compileSdk: 36
+- versionCode/versionName: 23 / 3.0.0-cloud-ai
+- ABI policy: existing release is armeabi-v7a-only; CI instrumentation uses x86_64 explicitly.
+
+Build environment
+- JDK before setup: Java runtime 21.0.12.1; javac was missing.
+- JDK setup: PASS — openjdk-21-jdk installed from Ubuntu package repositories.
+- Verified after setup: java 21.0.12.1; javac 21.0.12.1.
+- Gradle wrapper: 9.7.0.
+- AGP: 9.3.1.
+- Kotlin plugin/compiler: 2.4.0.
+- Android SDK: BLOCKED — no sdkmanager, adb, or Android SDK installation was present.
+- NDK/CMake: BLOCKED — not available in the sandbox.
+- local.properties: intentionally not committed; no SDK path was available to configure.
+
+Build and test evidence
+- First command: ./gradlew --no-daemon testDebugUnitTest assembleDebug --stacktrace
+- First result: FAIL, 1 second. Gradle could not provision the Java 21 toolchain because the sandbox had no javac/toolchain installation.
+- JDK installation command: sudo apt-get install -y openjdk-21-jdk
+- Retry command: ./gradlew --no-daemon testDebugUnitTest assembleDebug --stacktrace
+- Retry result: FAIL, 24 seconds. Exact blocker: SDK location not found; define ANDROID_HOME or sdk.dir in local.properties.
+- Source whitespace check: PASS — git diff --check.
+- JVM/unit tests: BLOCKED at Gradle configuration because Android SDK is missing; no tests are claimed as passed.
+- Android lint: BLOCKED at Gradle configuration because Android SDK is missing.
+- APK: NOT PRODUCED. No APK path, size, SHA-256, package inspection, or ABI verification is claimed.
+- Instrumented/physical-device tests: NOT RUN; no Android device/emulator is attached.
+
+Integrated Linux implementation
+- Added app-private LinuxRuntimeManager with first-use Alpine ARMv7 rootfs download, SHA-256 verification, safe archive member validation, repository configuration, persistent storage, and actionable readiness states.
+- Pinned Alpine archive: alpine-minirootfs-3.24.2-armv7.tar.gz.
+- Pinned Alpine SHA-256: 5552f1ef2398cee46ef2cf733f8f1258f39a77ad065dfd47282fc0df9fe1976c.
+- Primary PRoot source: https://github.com/termux/proot
+- Reviewed PRoot commit: b8c1f5c5c6730dc9d521d5bd5ce1cfeedecde087.
+- Source inspection: PASS — reviewed commit contains the link2symlink extension and --link2symlink CLI option.
+- PRoot Android ARM32 executable: BLOCKED — no Android NDK/toolchain was available to build and inspect the final ELF in this sandbox. The app refuses to claim readiness or fall back to /system/bin/sh when the verified executable is absent.
+- Shell startup: implemented through ProcessBuilder invoking PRoot with --link2symlink, -0, rootfs, /dev, /proc, app-private storage, and /bin/sh -l; runtime execution remains unverified until an ARM32 build is installed on a device.
+- Added persistent session manager integration and an in-app integrated terminal screen with install/repair, start shell, command, clear, and error/status flows.
+- Added JVM tests for archive traversal rejection and pinned metadata; execution is blocked by missing Android SDK.
+
+Legacy local AI audit
+- LEGACY_LOCAL_AI_PRESENT: historical names and documentation remain in archived catalogs/docs, but current cloud-first code does not package a GGUF file or llama.cpp module.
+- No GGUF, .so, or keystore artifacts were found in the checked-out working tree.
+- Existing OpenRouter/cloud provider architecture was preserved.
+
+Signing and release
+- Signing key: SIGNING_KEY_MISSING in this sandbox.
+- Release signing: SIGNING_STATUS_UNVERIFIED.
+- GitHub-hosted release APK: NOT PUBLISHED; publication is blocked until the native runtime is built, Android build succeeds, signing is authorized, and device verification is completed.
+
+Unresolved blockers and next corrective actions
+1. Install the Android command-line tools, platform 36, build-tools 36.0.0, NDK 27.2.12479018, and platform-tools.
+2. Build Termux PRoot at the pinned commit for Android armeabi-v7a with the required compatibility patches; inspect ELF interpreter/linkage/dependencies and place the verified executable at app-private linux-runtime/proot-armv7.
+3. Run the app on Samsung Galaxy M10 SM-M105F / Android 9 and verify PRoot, Alpine shell, link2symlink, apk, bash, python3, git, persistence, AI, and GitHub workflows using captured output.
+4. Re-run Gradle tests/lint/build, review the APK, obtain authorized release signing, push the feature branch, and create/update a new PR without merging main.
+
+Statuses: BUILD_ENV_INCOMPLETE; ANDROID_SDK_INSTALL_BLOCKED; NDK_BUILD_BLOCKED; APK_NOT_PRODUCED; PHYSICAL_DEVICE_UNVERIFIED; SIGNING_KEY_MISSING; AUDIT_INCOMPLETE.
+
+
+PR #4 follow-up evidence (2026-10-14)
+- PR: https://github.com/umarashebir-cpu/usman-and-umar/pull/4
+- Workflow run: 38600382573
+- Branch/base verified: feature/integrated-linux-terminal -> main; PR HEAD 58457f1e09285ee5e63572546e5688e9ee729596; PR remained OPEN and MERGEABLE.
+- CI result before correction: FAIL across debug/unit, lint, API 28 instrumentation, API 36 instrumentation, and unsigned release jobs.
+- Root cause: the new INTEGRATED_LINUX enum member made existing PrivilegedCommandExecutor when expressions non-exhaustive. CI reported the exact Kotlin errors at lines 34 and 53 and returned exit code 1.
+- Correction: added an explicit non-privileged result for direct executor calls and a guarded error for attempts to start integrated sessions through the privileged executor. PersistentTerminalManager remains the integrated-session owner.
+- CI additions: debug APK metadata/SHA-256 artifact capture, reproducible PRoot commit/link2symlink verification, official Alpine ARMv7 checksum verification, and archive traversal listing checks.
+- Current status after correction: awaiting the new CI run; no new build, test, APK, or device success is claimed until completed evidence is available.
